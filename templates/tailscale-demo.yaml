@@ -1,0 +1,312 @@
+---
+# yamllint disable rule:line-length
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'VPC public and private subnets configured to use Tailscale'
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Required'
+        Parameters:
+          - SshKey
+      - Label:
+          default: 'Probably want to update'
+        Parameters:
+          - SshAllowedIPs
+      - Label:
+          default: 'Probably no need to update but available to customize'
+        Parameters:
+          - AmiId
+          - InstanceType
+          - PrivateSubnet1CIDR
+          - PublicSubnet1CIDR
+          - VpcCIDR
+    ParameterLabels:
+      AmiId:
+        default: 'Amazon Machine Image ID'
+      InstanceType:
+        default: 'EC2 Instance Type'
+      PrivateSubnet1CIDR:
+        default: 'Private Subnet CIDR'
+      PublicSubnet1CIDR:
+        default: 'Public Subnet CIDR'
+      SshAllowedIPs:
+        default: 'Default is to allow any address to connect to port 22. Use the URL below to get your IPv4 address and add a /32 to restrict to just your IP. Example: 12.34.56.78/32'
+      SshKey:
+        default: 'SSH Key Pair. Select an existing key from the list or go to EC2 -> Key Pairs and press the Create key pair button to create a new key.'
+      VpcCIDR:
+        default: 'VPC CIDR'
+
+Parameters:
+
+  # https://aws.amazon.com/blogs/compute/query-for-the-latest-amazon-linux-ami-ids-using-aws-systems-manager-parameter-store/
+  AmiId:
+    Description: 'Latest Amazon Linux 2 AMI ID'
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  InstanceType:
+    Description: 'EC2 instance type. Enter any valid type - https://aws.amazon.com/ec2/instance-types/'
+    Type: String
+    Default: 't3a.nano'
+
+  PrivateSubnet1CIDR:
+    Description: IP range (CIDR notation) for the private subnet'
+    Type: String
+    Default: '10.0.1.0/24'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+  PublicSubnet1CIDR:
+    Description: 'IP range (CIDR notation) for the public subnet'
+    Type: String
+    Default: '10.0.0.0/24'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+  # Can limit by adding individual or a range of IPs. Curl-able place to check your IP https://checkip.amazonaws.com/
+  SshAllowedIPs:
+    Description: 'https://checkip.amazonaws.com'
+    Type: String
+    Default: '0.0.0.0/0'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+  SshKey:
+    Description: 'SSH key to access instances'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: '10.0.0.0/16'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+Mappings:
+
+  Constants:
+    ValueOf:
+      EnvironmentName: 'Tailscale Demo'
+
+Resources:
+
+  # ~~~ Private Instance ~~~
+
+  PrivateSubnetServer:
+    DependsOn: NatServer
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref SshKey
+      SecurityGroupIds:
+        - !Ref PrivateSubnetSecurityGroup
+      SubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: 'Private Subnet Server'
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+
+          # Install, configure and start tailscale client
+          rpm -i $(curl -s https://tailscale.com/kb/1029/install-files | grep -oP 'https://(.*)tailscale-relay-(.*).x86_64.rpm')
+          sed -i 's/ACL_FILE/#ACL_FILE/'  /etc/default/tailscale-relay
+          systemctl enable tailscale-relay
+
+  PrivateSubnetSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Private subnet server access'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref PublicSubnet1CIDR
+
+  # ~~~ NAT Instance ~~~
+
+  NatServer:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref SshKey
+      SecurityGroupIds:
+        - !Ref NatSecurityGroup
+      SourceDestCheck: false
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: 'NAT Server'
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+
+          # Allow NAT routing
+          sysctl -w net.ipv4.ip_forward=1
+          /sbin/iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+          # Install tailscale client
+          rpm -i $(curl -s https://tailscale.com/kb/1029/install-files | grep -oP 'https://(.*)tailscale-relay-(.*).x86_64.rpm')
+          # Configure and get it ready for tailscale-login
+          sed -i 's/FLAGS=""/FLAGS="--routes=10.0.0.0\/24,10.0.1.0\/24"/' /etc/default/tailscale-relay
+          sed -i 's/ACL_FILE/#ACL_FILE/'  /etc/default/tailscale-relay
+          systemctl enable tailscale-relay
+
+  EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: 'vpc'
+
+  AssociateEipToNAT:
+    Type: 'AWS::EC2::EIPAssociation'
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      InstanceId: !Ref NatServer
+
+  NatSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: NAT Server Access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshAllowedIPs
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet1CIDR
+        - IpProtocol: udp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: !Ref PrivateSubnet1CIDR
+
+  # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-recover.html
+  NatRecoveryAlarmSystemStatusCheckFailed:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'NAT Server System Status Check Failed'
+      Namespace: 'AWS/EC2'
+      MetricName: 'StatusCheckFailed_System'
+      Statistic: 'Minimum'
+      Period: 60
+      EvaluationPeriods: 2
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+        - !Sub 'arn:aws:automate:${AWS::Region}:ec2:recover'
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref NatServer
+
+  # ~~~ VPC ~~~
+
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: !FindInMap [Constants, ValueOf, EnvironmentName]
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: !FindInMap [Constants, ValueOf, EnvironmentName]
+
+  InternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: 'Name'
+          Value: !Sub
+            - '${EnvironmentName} Public Subnet (AZ1)'
+            - {EnvironmentName: !FindInMap [Constants, ValueOf, EnvironmentName]}
+
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs  '']
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: 'Name'
+          Value: !Sub
+            - '${EnvironmentName} Private Subnet (AZ1)'
+            - {EnvironmentName: !FindInMap [Constants, ValueOf, EnvironmentName]}
+
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: 'Name'
+          Value: !Sub
+            - '${EnvironmentName} Public Routes'
+            - {EnvironmentName: !FindInMap [Constants, ValueOf, EnvironmentName]}
+
+  DefaultPublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PrivateRouteTable1:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: 'Name'
+          Value: !Sub
+            - '${EnvironmentName} Private Routes (AZ1)'
+            - {EnvironmentName: !FindInMap [Constants, ValueOf, EnvironmentName]}
+
+  DefaultPrivateRoute1:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: '0.0.0.0/0'
+      InstanceId: !Ref NatServer
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+Outputs:
+
+  NatInstancePublicIp:
+    Description: 'Public IP of the NAT EC2 instance'
+    Value: !GetAtt NatServer.PublicIp
+
+  SecondInstancePrivateIp:
+    Description: 'Private IP of the second EC2 instance in the private subnet'
+    Value: !GetAtt PrivateSubnetServer.PrivateIp
