@@ -1,6 +1,6 @@
 ## Overview
 
-
+![license](https://img.shields.io/badge/license-MIT-green)
 
 This repo contains a CloudFormation template that automates the deployment process described in the [Setting up Tailscale on AWS EC2](https://tailscale.com/kb/1021/install-aws) project knowledgebase article.
 
@@ -18,24 +18,18 @@ Both of the EC2 instances have the Tailscale Relay software installed and config
 
 ### Manual Template Deployment
 
-* Clone this repo or copy the tailscale-demo.yaml
-* Ensure you have an [EC2 Key Pair](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html#having-ec2-create-your-key-pair) created in the region in which you'll deploy the stack
-* Launch the stack from the [CloudFormation console](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html)
-  * Choose the Upload a template file option and upload the `templates/tailscale-demo.yaml` file
-* Give the stack a name using only alphanumeric chars and dashes
-  * The automated deployment Makefile uses tailscale-demo as an example
+* Ensure you have an [EC2 Key Pair](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html#having-ec2-create-your-key-pair) created in the region in which you'll deploy the stack and then press the button <a href="https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateUrl=https%3A%2F%2Fs3.amazonaws.com%2Fstatic-01.andyspohn.com%2Ftailscale-aws%2Fv0.0.1%2Ftailscale-demo.yaml&stackName=tailscale-demo&param_AmiId=%2Faws%2Fservice%2Fami-amazon-linux-latest%2Famzn2-ami-hvm-x86_64-gp2&param_InstanceType=t3a.nano&param_PrivateSubnet1CIDR=10.0.1.0%2F24&param_PublicSubnet1CIDR=10.0.0.0%2F24&param_SshAllowedIPs=0.0.0.0%2F0&param_VpcCIDR=10.0.0.0%2F16"><img src="https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png"/></a>
 * Select your SSH keypair from the drop-down list
 * Enter a CIDR mask for just your IP using a web [IPv4 lookup service](https://checkip.amazonaws.com)
   * Make sure you add the /32 suffix to restrict to just your IP
 
 ### Automated Template Deployment
 
-If you're using Mac or Linux _and_ have your AWS CLI configured for your account you can deploy
-using a two step process
+If you're using Mac or Linux _and_ have your AWS CLI configured for your account you can deploy using the project Makefile
 
 * At the top of the Makefile change the name of the SSH key to the one you'll use in your account. You can optionally update the SSH_ALLOWED_IPS variable.
   * `SSH_KEY := 'ts'` <~~ Your key name here
-* Deploy or delete using the make  
+* Deploy or delete using make
   * `make deploy`
   * `make delete`
 
@@ -53,14 +47,16 @@ From the NAT server console run the `sudo tailscale-login` command
   * In any browser, open the URL printed to the console
   * Upon successful authentication you will see the Tailscale client exit. Note that it has written a configuration file to `/var/lib/tailscale/relay` conf.
 
+Start the service using the command `sudo systemctl start tailscale-relay`
+  * Check service status with `sudo systemctl status tailscale-relay`
+
 From the Tailscale web console click the Enable Subnet Routes option for the NAT server
 * After succesfully authenticating and starting the service on the NAT server you'll see an entry for the node in the [Tailscale Admin Console](https://login2.tailscale.io/admin) in the Machines section.
 * The routes to both the public and private subnets have been configured as described in the [documentation](https://tailscale.com/kb/1019/install-subnets) but an additional step of Enabling Subnet Routes from the admin console must be completed before connectivity to nodes in the private subnet can be established.
 * After enabling subnet routes the NAT server node should now have both a green checkmark and a blue network icon.
 
-Once you've authorized the service to enable subnet routes _then_ start the tailscale-relay service in the console of the NAT server
+Once you've authorized the service to enable subnet routes restart the tailscale-relay service in the console of the NAT server
 * Start the service using the command `sudo systemctl start tailscale-relay`
-  * Check service status with `sudo systemctl status tailscale-relay`
 
 ### Step 2.3 - Configure the second node in the private subnet
 
