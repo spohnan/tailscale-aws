@@ -31,7 +31,7 @@ deploy: ## Deploy the demo stack
 
 lint: cfn-lint-exists ## Lint templates
 	@echo 'CloudFormation Lint Checks'
-	@find templates -name "*.yaml" -exec cfn-lint {} \;
+	@cfn-lint templates/*.yaml
 	@echo 'YAML Lint Checks'
-	@find templates -name "*.yaml" -exec yamllint {} \;
+	@yamllint templates
 .PHONY: lint
